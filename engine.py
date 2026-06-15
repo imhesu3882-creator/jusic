@@ -8,20 +8,22 @@ DATA_FILE = "data.json"
 stocks = {
     "삼성전자": "005930.KS",
     "SK하이닉스": "000660.KS",
-    "NAVER": "035420.KS",
-    "현대차": "005380.KS"
+    "NAVER": "035420.KS"
 }
 
-# 초기 자본
-cash = 10_000_000
-holdings = {}
+INITIAL_CASH = 10_000_000
 
 def load():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except:
-        return {"trades": [], "assets": []}
+        return {
+            "cash": INITIAL_CASH,
+            "positions": {},
+            "trades": [],
+            "assets": []
+        }
 
 def save(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -29,54 +31,77 @@ def save(data):
 
 data = load()
 
-print("🚀 엔진 시작 (자동매매 실행 중)")
+print("🚀 백테스트 엔진 시작")
 
 while True:
-    total = cash
+    cash = data["cash"]
+    positions = data["positions"]
+
+    total_asset = cash
+    unrealized = 0
 
     for name, code in stocks.items():
         try:
             price = yf.Ticker(code).history(period="1d", interval="1m")["Close"].iloc[-1]
 
-            # 매우 단순 전략 (테스트용)
-            if name not in holdings:
-                holdings[name] = price
-                cash_used = price
+            # =========================
+            # 📌 매수 (없으면 1회만)
+            # =========================
+            if name not in positions and cash > price:
+                positions[name] = {
+                    "buy_price": price,
+                    "qty": 1
+                }
+
+                data["cash"] -= price
 
                 data["trades"].append({
                     "type": "BUY",
                     "name": name,
-                    "time": str(datetime.now()),
-                    "price": price
+                    "price": price,
+                    "time": str(datetime.now())
                 })
 
-            else:
-                change = (price - holdings[name]) / holdings[name]
+            # =========================
+            # 📌 평가 손익
+            # =========================
+            if name in positions:
+                buy_price = positions[name]["buy_price"]
+                qty = positions[name]["qty"]
 
-                # +0.7% 익절
-                if change > 0.007:
-                    cash += price
+                profit_rate = (price - buy_price) / buy_price
+                unrealized += (price - buy_price) * qty
+
+                # =========================
+                # 📌 매도 조건 (+0.7%)
+                # =========================
+                if profit_rate > 0.007:
+                    data["cash"] += price * qty
+
                     data["trades"].append({
                         "type": "SELL",
                         "name": name,
-                        "time": str(datetime.now()),
-                        "profit_pct": round(change*100,2)
+                        "price": price,
+                        "profit_pct": round(profit_rate*100, 2),
+                        "time": str(datetime.now())
                     })
-                    del holdings[name]
+
+                    del positions[name]
 
         except:
             pass
 
-    # 총 자산 계산
-    total = cash + sum(holdings.values())
+    total_asset = data["cash"] + unrealized
 
     data["assets"].append({
         "time": str(datetime.now()),
-        "total": total
+        "total": total_asset,
+        "cash": data["cash"],
+        "unrealized": unrealized
     })
 
     save(data)
 
-    print("💰 자산:", int(total))
+    print(f"💰 총자산: {int(total_asset)} | 현금: {int(data['cash'])}")
 
     time.sleep(30)
